@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 php:8.4-fpm
+FROM php:8.4-fpm
 
 # Set working directory
 WORKDIR /var/www/html/
@@ -20,10 +20,10 @@ RUN apt-get update && apt-get install -y \
     libzip-dev \
     unzip \
     git \
-    curl
-
-# Clear cache
-RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+    curl \
+    calendar \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install extensions for php
 RUN curl -sSL https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions -o - | sh -s \

@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 php:8.3-fpm
+FROM php:8.3-fpm
 
 # Set working directory
 WORKDIR /var/www/html/
@@ -21,20 +21,37 @@ RUN apt-get update && apt-get install -y \
     curl \
     supervisor
 
-RUN curl -sSL https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions -o - | sh -s \
-      ldap gd exif zip
+# PHP extensions
+RUN curl -sSL https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions \
+        -o /usr/local/bin/install-php-extensions \
+    && chmod +x /usr/local/bin/install-php-extensions \
+    && install-php-extensions ldap gd exif zip
+
+# Microsoft ODBC Driver 18, which sqlsrv/pdo_sqlsrv link against. The suite is
+# derived from the base image so this keeps working across Debian upgrades, and
+# both signing keys are loaded (bullseye/bookworm use the old one, trixie the
+# 2025 one). Driver 17 is amd64-only, so 18 is required for native arm64 builds.
+RUN . /etc/os-release \
+    && { curl -fsSL https://packages.microsoft.com/keys/microsoft.asc; \
+         curl -fsSL https://packages.microsoft.com/keys/microsoft-2025.asc; } \
+        | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/${VERSION_ID}/prod ${VERSION_CODENAME} main" \
+        > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc-dev
+
+# sqlsrv/pdo_sqlsrv from pinned tarballs. pecl.php.net only advertises REST 1.0
+# and 1.1, so `pecl install sqlsrv` cannot resolve a release and fails with
+# "No releases available"; handing pecl the tarball skips that lookup entirely.
+ARG SQLSRV_VERSION=5.13.3
+RUN curl -fsSL https://pecl.php.net/get/sqlsrv-${SQLSRV_VERSION}.tgz -o /tmp/sqlsrv.tgz \
+    && curl -fsSL https://pecl.php.net/get/pdo_sqlsrv-${SQLSRV_VERSION}.tgz -o /tmp/pdo_sqlsrv.tgz \
+    && pecl install /tmp/sqlsrv.tgz /tmp/pdo_sqlsrv.tgz \
+    && docker-php-ext-enable sqlsrv pdo_sqlsrv \
+    && rm -f /tmp/sqlsrv.tgz /tmp/pdo_sqlsrv.tgz
 
 # Clear cache
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Microsoft SQL Server Prerequisites & SQL Server drivers
-RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
-    && curl https://packages.microsoft.com/config/debian/11/prod.list \
-        > /etc/apt/sources.list.d/mssql-release.list \
-    && apt-get update \ 
-    && ACCEPT_EULA=Y apt-get install -y msodbcsql17 unixodbc-dev
-
-RUN pecl install sqlsrv pdo_sqlsrv
 
 # Install composer (php package manager)
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
